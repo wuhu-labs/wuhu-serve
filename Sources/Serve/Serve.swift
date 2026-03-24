@@ -1,0 +1,92 @@
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
+import Foundation
+#endif
+
+import Fetch
+
+public typealias Handler = @Sendable (Request) async throws -> Response
+
+public protocol ServeConnection: Sendable {
+  func read(into buffer: UnsafeMutableRawBufferPointer) async throws -> Int
+  func write(contentsOf bytes: [UInt8]) async throws
+  func close() async
+}
+
+public struct ServeOptions: Sendable {
+  public var scheme: String
+  public var defaultHost: String
+  public var maximumHeadBytes: Int
+  public var maximumBodyBytes: Int
+
+  public init(
+    scheme: String = "http",
+    defaultHost: String = "localhost",
+    maximumHeadBytes: Int = 16 * 1024,
+    maximumBodyBytes: Int = 8 * 1024 * 1024
+  ) {
+    self.scheme = scheme
+    self.defaultHost = defaultHost
+    self.maximumHeadBytes = maximumHeadBytes
+    self.maximumBodyBytes = maximumBodyBytes
+  }
+}
+
+public enum ServeError: Error, Equatable, Sendable {
+  case conflictingBodyHeaders
+  case duplicateHeader(String)
+  case headersTooLarge(limit: Int)
+  case invalidChunkSize
+  case invalidChunkTerminator
+  case invalidContentLength
+  case invalidHeaderLine
+  case invalidRequestLine
+  case invalidURL(String)
+  case missingHostHeader
+  case requestBodyTooLarge(limit: Int)
+  case unsupportedHTTPVersion(String)
+  case unsupportedTransferEncoding(String)
+  case unexpectedEndOfStream
+}
+
+public enum Serve {
+  public static func serve(
+    connection: any ServeConnection,
+    options: ServeOptions = .init(),
+    handler: @escaping Handler
+  ) async throws {
+    var http = HTTP1Connection(connection: connection, options: options)
+
+    do {
+      let request = try await http.readRequest()
+      let response = try await handler(request)
+      try await http.writeResponse(response)
+    } catch let error as ServeError {
+      try? await http.writeErrorResponse(status: error.responseStatus)
+      await connection.close()
+      throw error
+    } catch {
+      try? await http.writeErrorResponse(status: .internalServerError)
+      await connection.close()
+      throw error
+    }
+
+    await connection.close()
+  }
+}
+
+extension ServeError {
+  var responseStatus: Status {
+    switch self {
+    case .headersTooLarge:
+      return .requestHeaderFieldsTooLarge
+    case .requestBodyTooLarge:
+      return .contentTooLarge
+    case let .unsupportedHTTPVersion(version):
+      return Status(code: 505, reasonPhrase: "Unsupported HTTP Version (\(version))")
+    default:
+      return .badRequest
+    }
+  }
+}
