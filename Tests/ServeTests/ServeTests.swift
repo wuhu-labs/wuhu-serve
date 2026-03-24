@@ -26,7 +26,7 @@ import Testing
       #expect(request.method == .post)
       #expect(request.url.absoluteString == "http://app.wuhu.test/runner")
       #expect(request.body?.contentType == "text/plain")
-      let requestBody = try await bodyText(request.body?.stream)
+      let requestBody = try await bodyText(request.body)
       #expect(requestBody == "hello world")
 
       return Response(status: .ok, body: .chunks([
@@ -58,7 +58,7 @@ import Testing
     )
 
     try await Serve.serve(connection: connection) { request in
-      let requestBody = try await bodyText(request.body?.stream)
+      let requestBody = try await bodyText(request.body)
       #expect(requestBody == "hello world")
       return Response(status: .accepted)
     }
@@ -111,6 +111,130 @@ import Testing
     #expect(!response.contains("transfer-encoding: chunked\r\n"))
     #expect(response.hasSuffix("hello"))
   }
+
+  @Test func requiresRequestBodyToBeResolvedBeforeSuccess() async throws {
+    let connection = TestConnection(
+      inboundSegments: [
+        Array("POST /skip HTTP/1.1\r\n".utf8),
+        Array("Host: app.wuhu.test\r\n".utf8),
+        Array("Content-Length: 5\r\n".utf8),
+        Array("\r\nhello".utf8),
+      ]
+    )
+
+    do {
+      try await Serve.serve(connection: connection) { _ in
+        Response(status: .ok)
+      }
+      Issue.record("Expected unresolved request body error")
+    } catch let error as ServeError {
+      #expect(error == .unresolvedRequestBody)
+    } catch {
+      Issue.record("Unexpected error: \(error)")
+    }
+
+    let response = connection.outputString()
+    #expect(response.contains("HTTP/1.1 500 Internal Server Error\r\n"))
+  }
+
+  @Test func discardBodyAllowsIgnoringRequestBody() async throws {
+    let connection = TestConnection(
+      inboundSegments: [
+        Array("POST /skip HTTP/1.1\r\n".utf8),
+        Array("Host: app.wuhu.test\r\n".utf8),
+        Array("Transfer-Encoding: chunked\r\n".utf8),
+        Array("\r\n5\r\nhello\r\n0\r\n\r\n".utf8),
+      ]
+    )
+
+    try await Serve.serve(connection: connection) { request in
+      try await request.discardBody()
+      return Response(status: .ok, body: .chunk(Array("done".utf8)))
+    }
+
+    let response = connection.outputString()
+    #expect(response.contains("HTTP/1.1 200 OK\r\n"))
+    #expect(response.hasSuffix("4\r\ndone\r\n0\r\n\r\n"))
+  }
+
+  @Test func requireNoBodyReturnsBadRequest() async throws {
+    let connection = TestConnection(
+      inboundSegments: [
+        Array("POST /skip HTTP/1.1\r\n".utf8),
+        Array("Host: app.wuhu.test\r\n".utf8),
+        Array("Content-Length: 5\r\n".utf8),
+        Array("\r\nhello".utf8),
+      ]
+    )
+
+    do {
+      try await Serve.serve(connection: connection) { request in
+        try request.requireNoBody()
+        return Response(status: .ok)
+      }
+      Issue.record("Expected unexpected request body error")
+    } catch let error as ServeError {
+      #expect(error == .unexpectedRequestBody)
+    } catch {
+      Issue.record("Unexpected error: \(error)")
+    }
+
+    let response = connection.outputString()
+    #expect(response.contains("HTTP/1.1 400 Bad Request\r\n"))
+  }
+
+  @Test func partialAsyncBytesConsumptionStillFailsHandler() async throws {
+    let connection = TestConnection(
+      inboundSegments: [
+        Array("POST /skip HTTP/1.1\r\n".utf8),
+        Array("Host: app.wuhu.test\r\n".utf8),
+        Array("Transfer-Encoding: chunked\r\n".utf8),
+        Array("\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n".utf8),
+      ]
+    )
+
+    do {
+      try await Serve.serve(connection: connection) { request in
+        var iterator = request.body?.asyncBytes().makeAsyncIterator()
+        _ = try await iterator?.next()
+        return Response(status: .ok)
+      }
+      Issue.record("Expected unresolved request body error")
+    } catch let error as ServeError {
+      #expect(error == .unresolvedRequestBody)
+    } catch {
+      Issue.record("Unexpected error: \(error)")
+    }
+
+    let response = connection.outputString()
+    #expect(response.contains("HTTP/1.1 500 Internal Server Error\r\n"))
+  }
+
+  @Test func discardingMalformedChunkedRequestReturnsBadRequest() async throws {
+    let connection = TestConnection(
+      inboundSegments: [
+        Array("POST /skip HTTP/1.1\r\n".utf8),
+        Array("Host: app.wuhu.test\r\n".utf8),
+        Array("Transfer-Encoding: chunked\r\n".utf8),
+        Array("\r\nzz\r\nhello\r\n0\r\n\r\n".utf8),
+      ]
+    )
+
+    do {
+      try await Serve.serve(connection: connection) { request in
+        try await request.discardBody()
+        return Response(status: .ok)
+      }
+      Issue.record("Expected invalid chunk size error")
+    } catch let error as ServeError {
+      #expect(error == .invalidChunkSize)
+    } catch {
+      Issue.record("Unexpected error: \(error)")
+    }
+
+    let response = connection.outputString()
+    #expect(response.contains("HTTP/1.1 400 Bad Request\r\n"))
+  }
 }
 
 private final class TestConnection: @unchecked Sendable, ServeConnection {
@@ -151,7 +275,7 @@ private final class TestConnection: @unchecked Sendable, ServeConnection {
   }
 }
 
-private func bodyText(_ body: BodyStream?) async throws -> String? {
+private func bodyText(_ body: Body?) async throws -> String? {
   guard let body else { return nil }
-  return try await Response(status: .ok, body: body).text()
+  return try await body.text()
 }

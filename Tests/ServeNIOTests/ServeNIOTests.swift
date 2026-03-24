@@ -14,7 +14,7 @@ import Testing
 struct ServeNIOTests {
   @Test func servesOverTCPWithFetchAsyncHTTPClient() async throws {
     let listener = try await ServeNIOListener.bind(host: "127.0.0.1", port: 0) { request in
-      let body = try await bodyText(request.body?.stream) ?? ""
+      let body = try await bodyText(request.body) ?? ""
       return Response(
         status: .ok,
         body: .chunk(Array("\(request.method.rawValue) \(request.url.path) \(body)".utf8))
@@ -28,12 +28,12 @@ struct ServeNIOTests {
         let request = Request(
           url: try #require(URL(string: "http://127.0.0.1:\(port)/echo")),
           method: .post,
-          body: .stream(
-            contentType: "text/plain",
-            .chunks([
+          body: .chunks(
+            [
               Array("hello".utf8),
               Array(" world".utf8),
-            ])
+            ],
+            contentType: "text/plain"
           )
         )
 
@@ -62,7 +62,7 @@ private func withHTTPClient(
   }
 }
 
-private func bodyText(_ body: BodyStream?) async throws -> String? {
+private func bodyText(_ body: Body?) async throws -> String? {
   guard let body else { return nil }
-  return try await Response(status: .ok, body: body).text()
+  return try await body.text()
 }
