@@ -47,7 +47,7 @@ The repo currently ships:
 
 - `Serve` for the transport-neutral HTTP core
 - `ServeTesting` for in-memory `ServeConnection` helpers
-- `ServeNIO` for TCP listener support on SwiftNIO
+- `ServeNIO` for TCP and Unix domain socket listener support on SwiftNIO
 
 ## Status
 

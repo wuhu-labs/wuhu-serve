@@ -16,7 +16,40 @@ public struct ServeNIOListener: @unchecked Sendable {
     eventLoopGroup: EventLoopGroup = MultiThreadedEventLoopGroup.singleton,
     handler: @escaping Handler
   ) async throws -> Self {
-    let bootstrap = ServerBootstrap(group: eventLoopGroup)
+    let bootstrap = self.makeBootstrap(
+      eventLoopGroup: eventLoopGroup,
+      options: options,
+      handler: handler
+    )
+    let serverChannel = try await bootstrap.bind(host: host, port: port).get()
+    return Self(serverChannel: serverChannel)
+  }
+
+  public static func bind(
+    unixDomainSocketPath: String,
+    options: ServeOptions = .init(),
+    eventLoopGroup: EventLoopGroup = MultiThreadedEventLoopGroup.singleton,
+    handler: @escaping Handler
+  ) async throws -> Self {
+    let bootstrap = self.makeBootstrap(
+      eventLoopGroup: eventLoopGroup,
+      options: options,
+      handler: handler
+    )
+    let serverChannel = try await bootstrap.bind(unixDomainSocketPath: unixDomainSocketPath).get()
+    return Self(serverChannel: serverChannel)
+  }
+
+  public func close() async {
+    try? await self.serverChannel.close()
+  }
+
+  private static func makeBootstrap(
+    eventLoopGroup: EventLoopGroup,
+    options: ServeOptions,
+    handler: @escaping Handler
+  ) -> ServerBootstrap {
+    ServerBootstrap(group: eventLoopGroup)
       .serverChannelOption(.socketOption(.so_reuseaddr), value: 1)
       .childChannelInitializer { channel in
         let connection = NIOConnection.wrap(channel: channel)
@@ -28,13 +61,6 @@ public struct ServeNIOListener: @unchecked Sendable {
         }
         return channel.eventLoop.makeSucceededVoidFuture()
       }
-
-    let serverChannel = try await bootstrap.bind(host: host, port: port).get()
-    return Self(serverChannel: serverChannel)
-  }
-
-  public func close() async {
-    try? await self.serverChannel.close()
   }
 }
 

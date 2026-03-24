@@ -14,7 +14,7 @@
 ## Transport adapters
 
 - [x] Add a NIO listener target for TCP.
-- [ ] Extend the NIO listener target to Unix domain sockets.
+- [x] Extend the NIO listener target to Unix domain sockets.
 - [x] Add an in-memory helper target for higher-level integration testing.
 - [ ] Explore a lightweight adapter for `wuhu-yamux` streams.
 

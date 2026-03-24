@@ -7,6 +7,8 @@ import Foundation
 import AsyncHTTPClient
 import Fetch
 import FetchAsyncHTTPClient
+import NIOCore
+import NIOPosix
 import ServeNIO
 import Testing
 
@@ -46,6 +48,81 @@ struct ServeNIOTests {
     }
 
     await listener.close()
+  }
+
+  @Test func servesOverUnixDomainSocket() async throws {
+    let socketPath = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+      .appendingPathExtension("sock")
+      .path
+
+    let listener = try await ServeNIOListener.bind(unixDomainSocketPath: socketPath) { request in
+      let body = try await bodyText(request.body) ?? ""
+      return Response(
+        status: .ok,
+        body: .chunk(Array("\(request.method.rawValue) \(request.url.path) \(body)".utf8))
+      )
+    }
+
+    let promise = MultiThreadedEventLoopGroup.singleton.next().makePromise(of: String.self)
+
+    do {
+      let channel = try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+        .channelInitializer { channel in
+          channel.pipeline.addHandler(ResponseCollector(responsePromise: promise))
+        }
+        .connect(unixDomainSocketPath: socketPath)
+        .get()
+
+      let request = Array("""
+        POST /echo HTTP/1.1\r
+        Host: local\r
+        Content-Length: 11\r
+        \r
+        hello world
+        """.utf8)
+      try await channel.writeAndFlush(channel.allocator.buffer(bytes: request))
+
+      let response = try await promise.futureResult.get()
+      #expect(response.contains("HTTP/1.1 200 OK\r\n"))
+      #expect(response.contains("POST /echo hello world"))
+    } catch {
+      await listener.close()
+      try? FileManager.default.removeItem(atPath: socketPath)
+      throw error
+    }
+
+    await listener.close()
+    try? FileManager.default.removeItem(atPath: socketPath)
+  }
+}
+
+private final class ResponseCollector: ChannelInboundHandler, @unchecked Sendable {
+  typealias InboundIn = ByteBuffer
+
+  private var buffer = ByteBuffer()
+  private let responsePromise: EventLoopPromise<String>
+
+  init(responsePromise: EventLoopPromise<String>) {
+    self.responsePromise = responsePromise
+  }
+
+  func channelRead(context _: ChannelHandlerContext, data: NIOAny) {
+    var data = self.unwrapInboundIn(data)
+    self.buffer.writeBuffer(&data)
+  }
+
+  func channelInactive(context _: ChannelHandlerContext) {
+    if let bytes = self.buffer.readBytes(length: self.buffer.readableBytes) {
+      self.responsePromise.succeed(String(decoding: bytes, as: UTF8.self))
+    } else {
+      self.responsePromise.succeed("")
+    }
+  }
+
+  func errorCaught(context: ChannelHandlerContext, error: any Error) {
+    self.responsePromise.fail(error)
+    context.close(promise: nil)
   }
 }
 

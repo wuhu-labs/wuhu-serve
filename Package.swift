@@ -65,6 +65,8 @@ let package = Package(
       dependencies: [
         "ServeNIO",
         .product(name: "FetchAsyncHTTPClient", package: "wuhu-fetch"),
+        .product(name: "NIOCore", package: "swift-nio"),
+        .product(name: "NIOPosix", package: "swift-nio"),
       ]
     ),
   ]
