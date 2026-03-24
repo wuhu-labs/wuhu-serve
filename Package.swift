@@ -15,10 +15,16 @@ let package = Package(
       name: "Serve",
       targets: ["Serve"]
     ),
+    .library(
+      name: "ServeNIO",
+      targets: ["ServeNIO"]
+    ),
   ],
   dependencies: [
     .package(url: "https://github.com/wuhu-labs/wuhu-fetch", branch: "main"),
+    .package(url: "https://github.com/wuhu-labs/wuhu-fetch-async-http-client", branch: "main"),
     .package(url: "https://github.com/apple/swift-http-types.git", from: "1.3.0"),
+    .package(url: "https://github.com/apple/swift-nio.git", from: "2.81.0"),
   ],
   targets: [
     .target(
@@ -28,9 +34,24 @@ let package = Package(
         .product(name: "HTTPTypes", package: "swift-http-types"),
       ]
     ),
+    .target(
+      name: "ServeNIO",
+      dependencies: [
+        "Serve",
+        .product(name: "NIOCore", package: "swift-nio"),
+        .product(name: "NIOPosix", package: "swift-nio"),
+      ]
+    ),
     .testTarget(
       name: "ServeTests",
       dependencies: ["Serve"]
+    ),
+    .testTarget(
+      name: "ServeNIOTests",
+      dependencies: [
+        "ServeNIO",
+        .product(name: "FetchAsyncHTTPClient", package: "wuhu-fetch-async-http-client"),
+      ]
     ),
   ]
 )
