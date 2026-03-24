@@ -18,17 +18,23 @@ public struct ServeOptions: Sendable {
   public var scheme: String
   public var defaultHost: String
   public var maximumHeadBytes: Int
+  public var maximumHeaderLineBytes: Int
+  public var maximumHeaderCount: Int
   public var maximumBodyBytes: Int
 
   public init(
     scheme: String = "http",
     defaultHost: String = "localhost",
     maximumHeadBytes: Int = 16 * 1024,
+    maximumHeaderLineBytes: Int = 8 * 1024,
+    maximumHeaderCount: Int = 100,
     maximumBodyBytes: Int = 8 * 1024 * 1024
   ) {
     self.scheme = scheme
     self.defaultHost = defaultHost
     self.maximumHeadBytes = maximumHeadBytes
+    self.maximumHeaderLineBytes = maximumHeaderLineBytes
+    self.maximumHeaderCount = maximumHeaderCount
     self.maximumBodyBytes = maximumBodyBytes
   }
 }
@@ -36,15 +42,18 @@ public struct ServeOptions: Sendable {
 public enum ServeError: Error, Equatable, Sendable {
   case conflictingBodyHeaders
   case duplicateHeader(String)
+  case headerLineTooLarge(limit: Int)
   case headersTooLarge(limit: Int)
   case invalidChunkSize
   case invalidChunkTerminator
   case invalidContentLength
   case invalidHeaderLine
   case invalidRequestLine
+  case invalidRequestTarget(String)
   case invalidURL(String)
   case missingHostHeader
   case requestBodyTooLarge(limit: Int)
+  case tooManyHeaders(limit: Int)
   case unresolvedRequestBody
   case unexpectedRequestBody
   case unsupportedHTTPVersion(String)
@@ -94,7 +103,7 @@ extension Request {
 extension ServeError {
   var responseStatus: Status {
     switch self {
-    case .headersTooLarge:
+    case .headerLineTooLarge, .headersTooLarge, .tooManyHeaders:
       return .requestHeaderFieldsTooLarge
     case .requestBodyTooLarge:
       return .contentTooLarge
