@@ -46,6 +46,7 @@ That lets the same HTTP engine run over:
 The repo currently ships:
 
 - `Serve` for the transport-neutral HTTP core
+- `ServeTesting` for in-memory `ServeConnection` helpers
 - `ServeNIO` for TCP listener support on SwiftNIO
 
 ## Status

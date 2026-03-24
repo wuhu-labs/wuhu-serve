@@ -7,11 +7,12 @@ import Foundation
 import Fetch
 import HTTPTypes
 import Serve
+import ServeTesting
 import Testing
 
 @Suite struct ServeTests {
   @Test func parsesContentLengthRequestAndWritesChunkedResponse() async throws {
-    let connection = TestConnection(
+    let connection = InMemoryConnection(
       inboundSegments: [
         Array("POST /runner HTTP/1.1\r\n".utf8),
         Array("Host: app.wuhu.test\r\n".utf8),
@@ -45,7 +46,7 @@ import Testing
   }
 
   @Test func parsesChunkedRequestBodies() async throws {
-    let connection = TestConnection(
+    let connection = InMemoryConnection(
       inboundSegments: [
         Array("POST /events HTTP/1.1\r\n".utf8),
         Array("Host: runner.wuhu.test\r\n".utf8),
@@ -68,7 +69,7 @@ import Testing
   }
 
   @Test func returnsBadRequestForMissingHost() async {
-    let connection = TestConnection(
+    let connection = InMemoryConnection(
       inboundSegments: [
         Array("GET / HTTP/1.1\r\n".utf8),
         Array("\r\n".utf8),
@@ -92,7 +93,7 @@ import Testing
   }
 
   @Test func preservesExplicitContentLengthResponses() async throws {
-    let connection = TestConnection(
+    let connection = InMemoryConnection(
       inboundSegments: [
         Array("GET /fixed HTTP/1.1\r\n".utf8),
         Array("Host: fixed.wuhu.test\r\n".utf8),
@@ -113,7 +114,7 @@ import Testing
   }
 
   @Test func requiresRequestBodyToBeResolvedBeforeSuccess() async throws {
-    let connection = TestConnection(
+    let connection = InMemoryConnection(
       inboundSegments: [
         Array("POST /skip HTTP/1.1\r\n".utf8),
         Array("Host: app.wuhu.test\r\n".utf8),
@@ -138,7 +139,7 @@ import Testing
   }
 
   @Test func discardBodyAllowsIgnoringRequestBody() async throws {
-    let connection = TestConnection(
+    let connection = InMemoryConnection(
       inboundSegments: [
         Array("POST /skip HTTP/1.1\r\n".utf8),
         Array("Host: app.wuhu.test\r\n".utf8),
@@ -158,7 +159,7 @@ import Testing
   }
 
   @Test func requireNoBodyReturnsBadRequest() async throws {
-    let connection = TestConnection(
+    let connection = InMemoryConnection(
       inboundSegments: [
         Array("POST /skip HTTP/1.1\r\n".utf8),
         Array("Host: app.wuhu.test\r\n".utf8),
@@ -184,7 +185,7 @@ import Testing
   }
 
   @Test func partialAsyncBytesConsumptionStillFailsHandler() async throws {
-    let connection = TestConnection(
+    let connection = InMemoryConnection(
       inboundSegments: [
         Array("POST /skip HTTP/1.1\r\n".utf8),
         Array("Host: app.wuhu.test\r\n".utf8),
@@ -211,7 +212,7 @@ import Testing
   }
 
   @Test func discardingMalformedChunkedRequestReturnsBadRequest() async throws {
-    let connection = TestConnection(
+    let connection = InMemoryConnection(
       inboundSegments: [
         Array("POST /skip HTTP/1.1\r\n".utf8),
         Array("Host: app.wuhu.test\r\n".utf8),
@@ -238,7 +239,7 @@ import Testing
 
   @Test func rejectsTooManyHeaders() async throws {
     let options = ServeOptions(maximumHeaderCount: 1)
-    let connection = TestConnection(
+    let connection = InMemoryConnection(
       inboundSegments: [
         Array("GET / HTTP/1.1\r\n".utf8),
         Array("Host: app.wuhu.test\r\n".utf8),
@@ -265,7 +266,7 @@ import Testing
 
   @Test func rejectsOverlongHeaderLines() async throws {
     let options = ServeOptions(maximumHeaderLineBytes: 16)
-    let connection = TestConnection(
+    let connection = InMemoryConnection(
       inboundSegments: [
         Array("GET / HTTP/1.1\r\n".utf8),
         Array("Host: app.wuhu.test\r\n".utf8),
@@ -290,7 +291,7 @@ import Testing
   }
 
   @Test func rejectsFoldedHeaderLines() async throws {
-    let connection = TestConnection(
+    let connection = InMemoryConnection(
       inboundSegments: [
         Array("GET / HTTP/1.1\r\n".utf8),
         Array("Host: app.wuhu.test\r\n".utf8),
@@ -316,7 +317,7 @@ import Testing
   }
 
   @Test func rejectsOriginFormTargetsWithoutLeadingSlash() async throws {
-    let connection = TestConnection(
+    let connection = InMemoryConnection(
       inboundSegments: [
         Array("GET hello HTTP/1.1\r\n".utf8),
         Array("Host: app.wuhu.test\r\n".utf8),
@@ -341,7 +342,7 @@ import Testing
   }
 
   @Test func rejectsTargetsWithFragments() async throws {
-    let connection = TestConnection(
+    let connection = InMemoryConnection(
       inboundSegments: [
         Array("GET /runner#frag HTTP/1.1\r\n".utf8),
         Array("Host: app.wuhu.test\r\n".utf8),
@@ -366,7 +367,7 @@ import Testing
   }
 
   @Test func rejectsInvalidHTTPMethodTokens() async throws {
-    let connection = TestConnection(
+    let connection = InMemoryConnection(
       inboundSegments: [
         Array("GE(T / HTTP/1.1\r\n".utf8),
         Array("Host: app.wuhu.test\r\n".utf8),
@@ -388,44 +389,6 @@ import Testing
 
     let response = connection.outputString()
     #expect(response.contains("HTTP/1.1 400 Bad Request\r\n"))
-  }
-}
-
-private final class TestConnection: @unchecked Sendable, ServeConnection {
-  private var inboundSegments: [[UInt8]]
-  private var outbound: [UInt8] = []
-  private(set) var isClosed = false
-
-  init(inboundSegments: [[UInt8]]) {
-    self.inboundSegments = inboundSegments
-  }
-
-  func read(into buffer: UnsafeMutableRawBufferPointer) async throws -> Int {
-    guard !self.inboundSegments.isEmpty else { return 0 }
-
-    let segment = self.inboundSegments.removeFirst()
-    let count = min(buffer.count, segment.count)
-    segment.prefix(count).withUnsafeBytes { source in
-      buffer.copyBytes(from: source)
-    }
-
-    if count < segment.count {
-      self.inboundSegments.insert(Array(segment.dropFirst(count)), at: 0)
-    }
-
-    return count
-  }
-
-  func write(contentsOf bytes: [UInt8]) async throws {
-    self.outbound.append(contentsOf: bytes)
-  }
-
-  func close() async {
-    self.isClosed = true
-  }
-
-  func outputString() -> String {
-    String(decoding: self.outbound, as: UTF8.self)
   }
 }
 
