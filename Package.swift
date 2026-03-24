@@ -21,8 +21,7 @@ let package = Package(
     ),
   ],
   dependencies: [
-    .package(url: "https://github.com/wuhu-labs/wuhu-fetch", branch: "main"),
-    .package(url: "https://github.com/wuhu-labs/wuhu-fetch-async-http-client", branch: "main"),
+    .package(url: "https://github.com/wuhu-labs/wuhu-fetch", .upToNextMinor(from: "0.1.0")),
     .package(url: "https://github.com/apple/swift-http-types.git", from: "1.3.0"),
     .package(url: "https://github.com/apple/swift-nio.git", from: "2.81.0"),
   ],
@@ -50,7 +49,7 @@ let package = Package(
       name: "ServeNIOTests",
       dependencies: [
         "ServeNIO",
-        .product(name: "FetchAsyncHTTPClient", package: "wuhu-fetch-async-http-client"),
+        .product(name: "FetchAsyncHTTPClient", package: "wuhu-fetch"),
       ]
     ),
   ]
