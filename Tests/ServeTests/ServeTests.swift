@@ -235,6 +235,160 @@ import Testing
     let response = connection.outputString()
     #expect(response.contains("HTTP/1.1 400 Bad Request\r\n"))
   }
+
+  @Test func rejectsTooManyHeaders() async throws {
+    let options = ServeOptions(maximumHeaderCount: 1)
+    let connection = TestConnection(
+      inboundSegments: [
+        Array("GET / HTTP/1.1\r\n".utf8),
+        Array("Host: app.wuhu.test\r\n".utf8),
+        Array("X-Extra: value\r\n".utf8),
+        Array("\r\n".utf8),
+      ]
+    )
+
+    do {
+      try await Serve.serve(connection: connection, options: options) { _ in
+        Issue.record("Handler should not be invoked for invalid requests")
+        return Response(status: .ok)
+      }
+      Issue.record("Expected too many headers error")
+    } catch let error as ServeError {
+      #expect(error == .tooManyHeaders(limit: 1))
+    } catch {
+      Issue.record("Unexpected error: \(error)")
+    }
+
+    let response = connection.outputString()
+    #expect(response.contains("HTTP/1.1 431 Request Header Fields Too Large\r\n"))
+  }
+
+  @Test func rejectsOverlongHeaderLines() async throws {
+    let options = ServeOptions(maximumHeaderLineBytes: 16)
+    let connection = TestConnection(
+      inboundSegments: [
+        Array("GET / HTTP/1.1\r\n".utf8),
+        Array("Host: app.wuhu.test\r\n".utf8),
+        Array("\r\n".utf8),
+      ]
+    )
+
+    do {
+      try await Serve.serve(connection: connection, options: options) { _ in
+        Issue.record("Handler should not be invoked for invalid requests")
+        return Response(status: .ok)
+      }
+      Issue.record("Expected header line too large error")
+    } catch let error as ServeError {
+      #expect(error == .headerLineTooLarge(limit: 16))
+    } catch {
+      Issue.record("Unexpected error: \(error)")
+    }
+
+    let response = connection.outputString()
+    #expect(response.contains("HTTP/1.1 431 Request Header Fields Too Large\r\n"))
+  }
+
+  @Test func rejectsFoldedHeaderLines() async throws {
+    let connection = TestConnection(
+      inboundSegments: [
+        Array("GET / HTTP/1.1\r\n".utf8),
+        Array("Host: app.wuhu.test\r\n".utf8),
+        Array(" X-Extra: value\r\n".utf8),
+        Array("\r\n".utf8),
+      ]
+    )
+
+    do {
+      try await Serve.serve(connection: connection) { _ in
+        Issue.record("Handler should not be invoked for invalid requests")
+        return Response(status: .ok)
+      }
+      Issue.record("Expected invalid header line error")
+    } catch let error as ServeError {
+      #expect(error == .invalidHeaderLine)
+    } catch {
+      Issue.record("Unexpected error: \(error)")
+    }
+
+    let response = connection.outputString()
+    #expect(response.contains("HTTP/1.1 400 Bad Request\r\n"))
+  }
+
+  @Test func rejectsOriginFormTargetsWithoutLeadingSlash() async throws {
+    let connection = TestConnection(
+      inboundSegments: [
+        Array("GET hello HTTP/1.1\r\n".utf8),
+        Array("Host: app.wuhu.test\r\n".utf8),
+        Array("\r\n".utf8),
+      ]
+    )
+
+    do {
+      try await Serve.serve(connection: connection) { _ in
+        Issue.record("Handler should not be invoked for invalid requests")
+        return Response(status: .ok)
+      }
+      Issue.record("Expected invalid request target error")
+    } catch let error as ServeError {
+      #expect(error == .invalidRequestTarget("hello"))
+    } catch {
+      Issue.record("Unexpected error: \(error)")
+    }
+
+    let response = connection.outputString()
+    #expect(response.contains("HTTP/1.1 400 Bad Request\r\n"))
+  }
+
+  @Test func rejectsTargetsWithFragments() async throws {
+    let connection = TestConnection(
+      inboundSegments: [
+        Array("GET /runner#frag HTTP/1.1\r\n".utf8),
+        Array("Host: app.wuhu.test\r\n".utf8),
+        Array("\r\n".utf8),
+      ]
+    )
+
+    do {
+      try await Serve.serve(connection: connection) { _ in
+        Issue.record("Handler should not be invoked for invalid requests")
+        return Response(status: .ok)
+      }
+      Issue.record("Expected invalid request target error")
+    } catch let error as ServeError {
+      #expect(error == .invalidRequestTarget("/runner#frag"))
+    } catch {
+      Issue.record("Unexpected error: \(error)")
+    }
+
+    let response = connection.outputString()
+    #expect(response.contains("HTTP/1.1 400 Bad Request\r\n"))
+  }
+
+  @Test func rejectsInvalidHTTPMethodTokens() async throws {
+    let connection = TestConnection(
+      inboundSegments: [
+        Array("GE(T / HTTP/1.1\r\n".utf8),
+        Array("Host: app.wuhu.test\r\n".utf8),
+        Array("\r\n".utf8),
+      ]
+    )
+
+    do {
+      try await Serve.serve(connection: connection) { _ in
+        Issue.record("Handler should not be invoked for invalid requests")
+        return Response(status: .ok)
+      }
+      Issue.record("Expected invalid request line error")
+    } catch let error as ServeError {
+      #expect(error == .invalidRequestLine)
+    } catch {
+      Issue.record("Unexpected error: \(error)")
+    }
+
+    let response = connection.outputString()
+    #expect(response.contains("HTTP/1.1 400 Bad Request\r\n"))
+  }
 }
 
 private final class TestConnection: @unchecked Sendable, ServeConnection {

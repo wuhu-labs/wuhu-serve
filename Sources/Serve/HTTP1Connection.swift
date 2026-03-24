@@ -33,6 +33,9 @@ struct HTTP1Connection {
     guard let requestLine = lines.first else {
       throw ServeError.invalidRequestLine
     }
+    guard requestLine.utf8.count <= self.options.maximumHeaderLineBytes else {
+      throw ServeError.headerLineTooLarge(limit: self.options.maximumHeaderLineBytes)
+    }
 
     let requestLineParts = requestLine.split(separator: " ", omittingEmptySubsequences: false)
     guard requestLineParts.count == 3 else {
@@ -43,6 +46,10 @@ struct HTTP1Connection {
     let target = String(requestLineParts[1])
     let version = String(requestLineParts[2])
 
+    guard let method = Method(rawValue: methodString) else {
+      throw ServeError.invalidRequestLine
+    }
+
     guard version == "HTTP/1.1" else {
       throw ServeError.unsupportedHTTPVersion(version)
     }
@@ -51,8 +58,19 @@ struct HTTP1Connection {
     var host: String?
     var contentLength: Int?
     var transferEncoding: String?
+    let headerLines = Array(lines.dropFirst())
 
-    for line in lines.dropFirst() {
+    guard headerLines.count <= self.options.maximumHeaderCount else {
+      throw ServeError.tooManyHeaders(limit: self.options.maximumHeaderCount)
+    }
+
+    for line in headerLines {
+      guard line.utf8.count <= self.options.maximumHeaderLineBytes else {
+        throw ServeError.headerLineTooLarge(limit: self.options.maximumHeaderLineBytes)
+      }
+      if let first = line.first, first == " " || first == "\t" {
+        throw ServeError.invalidHeaderLine
+      }
       guard let separator = line.firstIndex(of: ":") else {
         throw ServeError.invalidHeaderLine
       }
@@ -94,6 +112,12 @@ struct HTTP1Connection {
       throw ServeError.missingHostHeader
     }
 
+    let url = try self.requestURL(
+      for: target,
+      method: method,
+      host: host
+    )
+
     let body: Body?
     if contentLength != nil, transferEncoding != nil {
       throw ServeError.conflictingBodyHeaders
@@ -129,21 +153,6 @@ struct HTTP1Connection {
       )
     } else {
       body = nil
-    }
-
-    let urlString: String
-    if target.hasPrefix("http://") || target.hasPrefix("https://") {
-      urlString = target
-    } else {
-      urlString = "\(self.options.scheme)://\(host)\(target)"
-    }
-
-    guard let url = URL(string: urlString) else {
-      throw ServeError.invalidURL(urlString)
-    }
-
-    guard let method = Method(rawValue: methodString) else {
-      throw ServeError.invalidRequestLine
     }
 
     return Request(
@@ -195,6 +204,37 @@ struct HTTP1Connection {
 
     try await self.connection.write(contentsOf: Array(wire.utf8))
     try await self.connection.write(contentsOf: body)
+  }
+
+  private func requestURL(
+    for target: String,
+    method: Fetch.Method,
+    host: String
+  ) throws -> URL {
+    guard !target.isEmpty, !target.contains("#") else {
+      throw ServeError.invalidRequestTarget(target)
+    }
+
+    if target.hasPrefix("http://") || target.hasPrefix("https://") {
+      guard let url = URL(string: target), url.host != nil else {
+        throw ServeError.invalidURL(target)
+      }
+      return url
+    }
+
+    guard target.hasPrefix("/") else {
+      throw ServeError.invalidRequestTarget(target)
+    }
+
+    if method == .connect {
+      throw ServeError.invalidRequestTarget(target)
+    }
+
+    let urlString = "\(self.options.scheme)://\(host)\(target)"
+    guard let url = URL(string: urlString) else {
+      throw ServeError.invalidURL(urlString)
+    }
+    return url
   }
 }
 
