@@ -16,6 +16,10 @@ let package = Package(
       targets: ["Serve"]
     ),
     .library(
+      name: "ServeTesting",
+      targets: ["ServeTesting"]
+    ),
+    .library(
       name: "ServeNIO",
       targets: ["ServeNIO"]
     ),
@@ -41,10 +45,18 @@ let package = Package(
         .product(name: "NIOPosix", package: "swift-nio"),
       ]
     ),
+    .target(
+      name: "ServeTesting",
+      dependencies: [
+        "Serve",
+        .product(name: "Fetch", package: "wuhu-fetch"),
+      ]
+    ),
     .testTarget(
       name: "ServeTests",
       dependencies: [
         "Serve",
+        "ServeTesting",
         .product(name: "Fetch", package: "wuhu-fetch"),
       ]
     ),
