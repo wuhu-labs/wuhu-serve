@@ -10,7 +10,7 @@ import HTTPTypes
 struct HTTP1Connection {
   let connection: any ServeConnection
   let options: ServeOptions
-  var reader: BufferedConnectionReader
+  let reader: BufferedConnectionReader
 
   init(connection: any ServeConnection, options: ServeOptions) {
     self.connection = connection
@@ -18,7 +18,7 @@ struct HTTP1Connection {
     self.reader = BufferedConnectionReader(connection: connection)
   }
 
-  mutating func readRequest() async throws -> Request {
+  func readRequest() async throws -> Request {
     let headBytes = try await self.reader.readUntilSequence(
       [13, 10, 13, 10],
       limit: self.options.maximumHeadBytes
@@ -94,21 +94,41 @@ struct HTTP1Connection {
       throw ServeError.missingHostHeader
     }
 
-    let bodyBytes: Bytes
+    let body: Body?
     if contentLength != nil, transferEncoding != nil {
       throw ServeError.conflictingBodyHeaders
     } else if let contentLength {
       guard contentLength <= self.options.maximumBodyBytes else {
         throw ServeError.requestBodyTooLarge(limit: self.options.maximumBodyBytes)
       }
-      bodyBytes = try await self.reader.readExact(count: contentLength)
+      if contentLength == 0 {
+        body = nil
+      } else {
+        let source = RequestBodySource(
+          reader: self.reader,
+          contentLength: contentLength,
+          maximumBodyBytes: self.options.maximumBodyBytes
+        )
+        body = .stream(
+          length: Int64(contentLength),
+          contentType: firstHeaderValue(named: "content-type", in: headers),
+          RequestBodySequence(source: source)
+        )
+      }
     } else if let transferEncoding {
       guard transferEncoding.lowercased() == "chunked" else {
         throw ServeError.unsupportedTransferEncoding(transferEncoding)
       }
-      bodyBytes = try await self.reader.readChunkedBody(limit: self.options.maximumBodyBytes)
+      let source = RequestBodySource(
+        reader: self.reader,
+        maximumBodyBytes: self.options.maximumBodyBytes
+      )
+      body = .stream(
+        contentType: firstHeaderValue(named: "content-type", in: headers),
+        RequestBodySequence(source: source)
+      )
     } else {
-      bodyBytes = []
+      body = nil
     }
 
     let urlString: String
@@ -126,17 +146,6 @@ struct HTTP1Connection {
       throw ServeError.invalidRequestLine
     }
 
-    let body: Request.Body?
-    if bodyBytes.isEmpty {
-      body = nil
-    } else {
-      body = .stream(
-        length: Int64(bodyBytes.count),
-        contentType: firstHeaderValue(named: "content-type", in: headers),
-        .chunk(bodyBytes)
-      )
-    }
-
     return Request(
       url: url,
       method: method,
@@ -145,7 +154,7 @@ struct HTTP1Connection {
     )
   }
 
-  mutating func writeResponse(_ response: Response) async throws {
+  func writeResponse(_ response: Response) async throws {
     let allowsBody = responseAllowsBody(response.status)
     let explicitContentLength = firstHeaderValue(named: "content-length", in: response.headers)
 
@@ -164,19 +173,19 @@ struct HTTP1Connection {
     }
 
     if explicitContentLength != nil {
-      for try await chunk in response.body where !chunk.isEmpty {
+      for try await chunk in response.body.asyncBytes() where !chunk.isEmpty {
         try await self.connection.write(contentsOf: chunk)
       }
       return
     }
 
-    for try await chunk in response.body where !chunk.isEmpty {
+    for try await chunk in response.body.asyncBytes() where !chunk.isEmpty {
       try await self.connection.write(contentsOf: serializeChunk(chunk))
     }
     try await self.connection.write(contentsOf: Array("0\r\n\r\n".utf8))
   }
 
-  mutating func writeErrorResponse(status: Status) async throws {
+  func writeErrorResponse(status: Status) async throws {
     let body = Array("\(status.code) \(status.reasonPhrase)\n".utf8)
     var wire = "HTTP/1.1 \(status.code) \(status.reasonPhrase)\r\n"
     wire += "content-type: text/plain; charset=utf-8\r\n"

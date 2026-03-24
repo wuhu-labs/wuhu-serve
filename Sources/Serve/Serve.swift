@@ -45,6 +45,8 @@ public enum ServeError: Error, Equatable, Sendable {
   case invalidURL(String)
   case missingHostHeader
   case requestBodyTooLarge(limit: Int)
+  case unresolvedRequestBody
+  case unexpectedRequestBody
   case unsupportedHTTPVersion(String)
   case unsupportedTransferEncoding(String)
   case unexpectedEndOfStream
@@ -56,11 +58,12 @@ public enum Serve {
     options: ServeOptions = .init(),
     handler: @escaping Handler
   ) async throws {
-    var http = HTTP1Connection(connection: connection, options: options)
+    let http = HTTP1Connection(connection: connection, options: options)
 
     do {
       let request = try await http.readRequest()
       let response = try await handler(request)
+      try await ensureResolved(request.body)
       try await http.writeResponse(response)
     } catch let error as ServeError {
       try? await http.writeErrorResponse(status: error.responseStatus)
@@ -76,6 +79,18 @@ public enum Serve {
   }
 }
 
+extension Request {
+  public func discardBody() async throws {
+    try await self.body?.discard()
+  }
+
+  public func requireNoBody() throws {
+    guard self.body == nil else {
+      throw ServeError.unexpectedRequestBody
+    }
+  }
+}
+
 extension ServeError {
   var responseStatus: Status {
     switch self {
@@ -83,10 +98,19 @@ extension ServeError {
       return .requestHeaderFieldsTooLarge
     case .requestBodyTooLarge:
       return .contentTooLarge
+    case .unresolvedRequestBody:
+      return .internalServerError
     case let .unsupportedHTTPVersion(version):
       return Status(code: 505, reasonPhrase: "Unsupported HTTP Version (\(version))")
     default:
       return .badRequest
     }
+  }
+}
+
+private func ensureResolved(_ body: Body?) async throws {
+  guard let body else { return }
+  guard await body.isResolved else {
+    throw ServeError.unresolvedRequestBody
   }
 }
