@@ -56,7 +56,7 @@ public enum Serve {
     options: ServeOptions = .init(),
     handler: @escaping Handler
   ) async throws {
-    var http = HTTP1Connection(connection: connection, options: options)
+    let http = HTTP1Connection(connection: connection, options: options)
 
     do {
       let request = try await http.readRequest()

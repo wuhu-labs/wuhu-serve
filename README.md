@@ -7,7 +7,7 @@ The current scope is intentionally narrow:
 - one request per connection
 - `Request -> Response` handler model
 - transport-neutral byte-stream connections
-- HTTP/1.1 request parsing and response serialization
+- streamed HTTP/1.1 request parsing and response serialization
 - `Connection: close` on every response
 - optional NIO TCP listener adapter
 
@@ -50,6 +50,7 @@ The repo currently ships:
 
 ## Status
 
-This repository currently contains the HTTP/1.1 core plus wire-level tests.
+This repository currently contains the HTTP/1.1 core plus wire-level tests, including
+lazy request-body streaming for both fixed-length and chunked request bodies.
 
 Planned follow-up work lives in [`TODO.md`](./TODO.md).

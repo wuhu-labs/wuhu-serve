@@ -111,6 +111,39 @@ import Testing
     #expect(!response.contains("transfer-encoding: chunked\r\n"))
     #expect(response.hasSuffix("hello"))
   }
+
+  @Test func doesNotReadRequestBodyUnlessHandlerConsumesIt() async throws {
+    let connection = LazyBodyConnection(
+      head: Array("POST /lazy HTTP/1.1\r\nHost: lazy.wuhu.test\r\nContent-Length: 11\r\n\r\n".utf8)
+    )
+
+    try await Serve.serve(connection: connection) { _ in
+      Response(status: .ok, body: .chunk(Array("done".utf8)))
+    }
+
+    #expect(connection.readCount == 1)
+    let response = connection.outputString()
+    #expect(response.contains("HTTP/1.1 200 OK\r\n"))
+    #expect(response.hasSuffix("4\r\ndone\r\n0\r\n\r\n"))
+  }
+
+  @Test func doesNotReadChunkedRequestBodyUnlessHandlerConsumesIt() async throws {
+    let connection = LazyBodyConnection(
+      head: Array(
+        "POST /lazy-chunked HTTP/1.1\r\nHost: lazy.wuhu.test\r\nTransfer-Encoding: chunked\r\n\r\n"
+          .utf8
+      )
+    )
+
+    try await Serve.serve(connection: connection) { _ in
+      Response(status: .ok, body: .chunk(Array("done".utf8)))
+    }
+
+    #expect(connection.readCount == 1)
+    let response = connection.outputString()
+    #expect(response.contains("HTTP/1.1 200 OK\r\n"))
+    #expect(response.hasSuffix("4\r\ndone\r\n0\r\n\r\n"))
+  }
 }
 
 private final class TestConnection: @unchecked Sendable, ServeConnection {
@@ -154,4 +187,40 @@ private final class TestConnection: @unchecked Sendable, ServeConnection {
 private func bodyText(_ body: BodyStream?) async throws -> String? {
   guard let body else { return nil }
   return try await Response(status: .ok, body: body).text()
+}
+
+private final class LazyBodyConnection: @unchecked Sendable, ServeConnection {
+  private let head: [UInt8]
+  private(set) var readCount = 0
+  private var outbound: [UInt8] = []
+
+  init(head: [UInt8]) {
+    self.head = head
+  }
+
+  func read(into buffer: UnsafeMutableRawBufferPointer) async throws -> Int {
+    self.readCount += 1
+
+    if self.readCount == 1 {
+      let count = min(buffer.count, self.head.count)
+      self.head.prefix(count).withUnsafeBytes { source in
+        buffer.copyBytes(from: source)
+      }
+      return count
+    }
+
+    throw UnexpectedRead()
+  }
+
+  func write(contentsOf bytes: [UInt8]) async throws {
+    self.outbound.append(contentsOf: bytes)
+  }
+
+  func close() async {}
+
+  func outputString() -> String {
+    String(decoding: self.outbound, as: UTF8.self)
+  }
+
+  private struct UnexpectedRead: Error {}
 }

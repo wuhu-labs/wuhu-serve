@@ -5,6 +5,7 @@
 - [x] Bootstrap `wuhu-serve` package and publish the repository.
 - [x] Build a transport-neutral `ServeConnection` API.
 - [x] Implement one-request-per-connection HTTP/1.1 parsing.
+- [x] Stream request bodies instead of fully buffering them.
 - [x] Implement streamed HTTP/1.1 response serialization.
 - [x] Add wire-level tests for fragmented request input.
 - [ ] Add explicit limits and tests for malformed header edge cases.
@@ -26,6 +27,6 @@
 
 ## Later
 
-- [ ] Request body streaming instead of fully buffering request bodies.
+- [ ] Switch `wuhu-fetch` back to a semver tag once lazy `BodyStream.stream(_:)` ships in a release.
 - [ ] Keep-alive support.
 - [ ] HTTP/2 story, likely via frontend proxy before native support.
