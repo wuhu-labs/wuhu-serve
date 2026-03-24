@@ -9,6 +9,7 @@ The current scope is intentionally narrow:
 - transport-neutral byte-stream connections
 - HTTP/1.1 request parsing and response serialization
 - `Connection: close` on every response
+- optional NIO TCP listener adapter
 
 It is not trying to be a full web framework yet.
 
@@ -41,6 +42,11 @@ That lets the same HTTP engine run over:
 - Unix domain sockets
 - yamux streams
 - in-memory test transports
+
+The repo currently ships:
+
+- `Serve` for the transport-neutral HTTP core
+- `ServeNIO` for TCP listener support on SwiftNIO
 
 ## Status
 
