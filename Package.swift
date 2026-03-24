@@ -21,7 +21,7 @@ let package = Package(
     ),
   ],
   dependencies: [
-    .package(url: "https://github.com/wuhu-labs/wuhu-fetch", .upToNextMinor(from: "0.1.0")),
+    .package(url: "https://github.com/wuhu-labs/wuhu-fetch", branch: "codex/body-resolution"),
     .package(url: "https://github.com/apple/swift-http-types.git", from: "1.3.0"),
     .package(url: "https://github.com/apple/swift-nio.git", from: "2.81.0"),
   ],
@@ -43,7 +43,10 @@ let package = Package(
     ),
     .testTarget(
       name: "ServeTests",
-      dependencies: ["Serve"]
+      dependencies: [
+        "Serve",
+        .product(name: "Fetch", package: "wuhu-fetch"),
+      ]
     ),
     .testTarget(
       name: "ServeNIOTests",
