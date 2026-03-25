@@ -46,11 +46,13 @@ That lets the same HTTP engine run over:
 The repo currently ships:
 
 - `Serve` for the transport-neutral HTTP core
+- `ServeRouting` for an optional tiny router that compiles to a plain `Handler`
 - `ServeTesting` for in-memory `ServeConnection` helpers
 - `ServeNIO` for TCP and Unix domain socket listener support on SwiftNIO
 
 ## Status
 
-This repository currently contains the HTTP/1.1 core plus wire-level tests.
+This repository currently contains the HTTP/1.1 core, an optional tiny routing
+layer, and wire-level tests.
 
 Planned follow-up work lives in [`TODO.md`](./TODO.md).

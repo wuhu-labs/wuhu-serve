@@ -21,8 +21,8 @@
 ## Framework layer
 
 - [ ] Add middleware composition helpers.
-- [ ] Add prefix mounting helpers.
-- [ ] Decide whether a tiny router should live in this repo or a sibling package.
+- [x] Add prefix mounting helpers.
+- [x] Decide whether a tiny router should live in this repo or a sibling package.
 
 ## Later
 
