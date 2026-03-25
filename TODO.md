@@ -20,9 +20,11 @@
 
 ## Framework layer
 
-- [ ] Add middleware composition helpers.
+- [x] Add middleware composition helpers.
 - [x] Add prefix mounting helpers.
 - [x] Decide whether a tiny router should live in this repo or a sibling package.
+- [x] Add basic SSE response helpers.
+- [x] Add basic static-file middleware.
 
 ## Later
 
