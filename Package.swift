@@ -16,6 +16,10 @@ let package = Package(
       targets: ["Serve"]
     ),
     .library(
+      name: "ServeRouting",
+      targets: ["ServeRouting"]
+    ),
+    .library(
       name: "ServeTesting",
       targets: ["ServeTesting"]
     ),
@@ -33,6 +37,14 @@ let package = Package(
     .target(
       name: "Serve",
       dependencies: [
+        .product(name: "Fetch", package: "wuhu-fetch"),
+        .product(name: "HTTPTypes", package: "swift-http-types"),
+      ]
+    ),
+    .target(
+      name: "ServeRouting",
+      dependencies: [
+        "Serve",
         .product(name: "Fetch", package: "wuhu-fetch"),
         .product(name: "HTTPTypes", package: "swift-http-types"),
       ]
@@ -58,6 +70,14 @@ let package = Package(
         "Serve",
         "ServeTesting",
         .product(name: "Fetch", package: "wuhu-fetch"),
+      ]
+    ),
+    .testTarget(
+      name: "ServeRoutingTests",
+      dependencies: [
+        "ServeRouting",
+        .product(name: "Fetch", package: "wuhu-fetch"),
+        .product(name: "HTTPTypes", package: "swift-http-types"),
       ]
     ),
     .testTarget(
