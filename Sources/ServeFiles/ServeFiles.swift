@@ -88,21 +88,34 @@ private func resolveFileURL(
 
   guard isDescendant(candidate, of: rootDirectory) else { return nil }
 
-  var isDirectory: ObjCBool = false
-  guard FileManager.default.fileExists(atPath: candidate.path, isDirectory: &isDirectory) else {
+  guard let candidateKind = fileKind(at: candidate) else {
     return nil
   }
 
-  if isDirectory.boolValue {
+  if candidateKind == .directory {
     candidate.appendPathComponent(indexFile, isDirectory: false)
     candidate = candidate.standardizedFileURL
     guard isDescendant(candidate, of: rootDirectory) else { return nil }
-    guard FileManager.default.fileExists(atPath: candidate.path, isDirectory: &isDirectory), !isDirectory.boolValue else {
+    guard fileKind(at: candidate) == .file else {
       return nil
     }
   }
 
   return candidate
+}
+
+private enum FileKind {
+  case file
+  case directory
+}
+
+private func fileKind(at url: URL) -> FileKind? {
+  guard FileManager.default.fileExists(atPath: url.path) else {
+    return nil
+  }
+
+  let resourceValues = try? url.resourceValues(forKeys: [.isDirectoryKey])
+  return resourceValues?.isDirectory == true ? .directory : .file
 }
 
 private func isDescendant(_ candidate: URL, of rootDirectory: URL) -> Bool {
