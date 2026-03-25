@@ -120,4 +120,58 @@ import Testing
     #expect(response.status == .ok)
     #expect(try await response.body.text() == "normalized")
   }
+
+  @Test func middlewareWrapsRouteHandlerInRegistrationOrder() async throws {
+    var router = Router()
+    router.use { next in
+      { request in
+        var response = try await next(request)
+        response.headers[.init("x-order")!] = "outer"
+        return response
+      }
+    }
+    router.use { next in
+      { request in
+        var response = try await next(request)
+        response.headers[.init("x-inner")!] = "inner"
+        return response
+      }
+    }
+    router.get("/healthz") { _, _ in
+      Response(status: .ok, body: .string("ok"))
+    }
+
+    let response = try await router.handler(
+      Request(url: try #require(URL(string: "http://localhost/healthz")))
+    )
+
+    #expect(response.status == .ok)
+    #expect(response.headers[.init("x-order")!] == "outer")
+    #expect(response.headers[.init("x-inner")!] == "inner")
+  }
+
+  @Test func mountedRouterPreservesItsMiddlewareForMountedRoutes() async throws {
+    var child = Router()
+    child.use { next in
+      { request in
+        var response = try await next(request)
+        response.headers[.init("x-child")!] = "present"
+        return response
+      }
+    }
+    child.get("/status") { _, _ in
+      Response(status: .ok, body: .string("child"))
+    }
+
+    var router = Router()
+    router.mount("/v1/runner", child)
+
+    let response = try await router.handler(
+      Request(url: try #require(URL(string: "http://localhost/v1/runner/status")))
+    )
+
+    #expect(response.status == .ok)
+    #expect(response.headers[.init("x-child")!] == "present")
+    #expect(try await response.body.text() == "child")
+  }
 }

@@ -16,8 +16,16 @@ let package = Package(
       targets: ["Serve"]
     ),
     .library(
+      name: "ServeSSE",
+      targets: ["ServeSSE"]
+    ),
+    .library(
       name: "ServeRouting",
       targets: ["ServeRouting"]
+    ),
+    .library(
+      name: "ServeFiles",
+      targets: ["ServeFiles"]
     ),
     .library(
       name: "ServeTesting",
@@ -50,6 +58,23 @@ let package = Package(
       ]
     ),
     .target(
+      name: "ServeSSE",
+      dependencies: [
+        "Serve",
+        .product(name: "Fetch", package: "wuhu-fetch"),
+        .product(name: "HTTPTypes", package: "swift-http-types"),
+      ]
+    ),
+    .target(
+      name: "ServeFiles",
+      dependencies: [
+        "Serve",
+        "ServeRouting",
+        .product(name: "Fetch", package: "wuhu-fetch"),
+        .product(name: "HTTPTypes", package: "swift-http-types"),
+      ]
+    ),
+    .target(
       name: "ServeNIO",
       dependencies: [
         "Serve",
@@ -75,6 +100,23 @@ let package = Package(
     .testTarget(
       name: "ServeRoutingTests",
       dependencies: [
+        "ServeRouting",
+        .product(name: "Fetch", package: "wuhu-fetch"),
+        .product(name: "HTTPTypes", package: "swift-http-types"),
+      ]
+    ),
+    .testTarget(
+      name: "ServeSSETests",
+      dependencies: [
+        "ServeSSE",
+        .product(name: "Fetch", package: "wuhu-fetch"),
+        .product(name: "HTTPTypes", package: "swift-http-types"),
+      ]
+    ),
+    .testTarget(
+      name: "ServeFilesTests",
+      dependencies: [
+        "ServeFiles",
         "ServeRouting",
         .product(name: "Fetch", package: "wuhu-fetch"),
         .product(name: "HTTPTypes", package: "swift-http-types"),

@@ -9,6 +9,7 @@ import HTTPTypes
 import Serve
 
 public typealias RouteHandler = @Sendable (_ request: Request, _ parameters: RouteParameters) async throws -> Response
+public typealias Middleware = @Sendable (_ next: @escaping Handler) -> Handler
 
 public struct RouteParameters: Sendable, Equatable {
   private let storage: [String: String]
@@ -32,6 +33,7 @@ public struct RouteParameters: Sendable, Equatable {
 
 public struct Router: Sendable {
   private var routes: [Route] = []
+  private var middlewares: [Middleware] = []
 
   public init() {}
 
@@ -76,15 +78,23 @@ public struct Router: Sendable {
         Route(
           method: route.method,
           path: route.path.prefixed(by: prefixPattern),
-          handler: route.handler
+          handler: applyingMiddlewares(router.middlewares, to: route.handler)
         )
       }
     )
   }
 
-  public var handler: Handler {
-    let routes = self.routes
+  public mutating func use(_ middleware: @escaping Middleware) {
+    self.middlewares.append(middleware)
+  }
 
+  public var handler: Handler {
+    let dispatch = self.dispatchHandler
+    return applyMiddlewares(self.middlewares, to: dispatch)
+  }
+
+  private var dispatchHandler: Handler {
+    let routes = self.routes
     return { request in
       let pathSegments = PathPattern.segments(for: request.url.path)
 
@@ -125,10 +135,33 @@ public struct Router: Sendable {
   }
 }
 
+public func applyMiddlewares(
+  _ middlewares: [Middleware],
+  to handler: @escaping Handler
+) -> Handler {
+  middlewares.reversed().reduce(handler) { next, middleware in
+    middleware(next)
+  }
+}
+
 private struct Route: Sendable {
   let method: Fetch.Method
   let path: PathPattern
   let handler: RouteHandler
+}
+
+private func applyingMiddlewares(
+  _ middlewares: [Middleware],
+  to handler: @escaping RouteHandler
+) -> RouteHandler {
+  guard !middlewares.isEmpty else { return handler }
+
+  return { request, parameters in
+    let endpoint: Handler = { request in
+      try await handler(request, parameters)
+    }
+    return try await applyMiddlewares(middlewares, to: endpoint)(request)
+  }
 }
 
 private struct PathPattern: Sendable, Equatable {
