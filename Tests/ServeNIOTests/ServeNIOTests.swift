@@ -360,8 +360,16 @@ private final class HookRecorder: @unchecked Sendable {
     var handlerErrors: [String] = []
   }
 
-  private let lock = NSLock()
+  private var lock = pthread_mutex_t()
   private var storage = Snapshot()
+
+  init() {
+    pthread_mutex_init(&self.lock, nil)
+  }
+
+  deinit {
+    pthread_mutex_destroy(&self.lock)
+  }
 
   var hooks: ServeNIOHooks {
     ServeNIOHooks(
@@ -404,15 +412,23 @@ private final class HookRecorder: @unchecked Sendable {
   }
 
   func snapshot() -> Snapshot {
-    self.lock.lock()
-    defer { self.lock.unlock() }
+    self.lockState()
+    defer { self.unlockState() }
     return self.storage
   }
 
   private func withLock(_ update: (inout Snapshot) -> Void) {
-    self.lock.lock()
+    self.lockState()
     update(&self.storage)
-    self.lock.unlock()
+    self.unlockState()
+  }
+
+  private func lockState() {
+    pthread_mutex_lock(&self.lock)
+  }
+
+  private func unlockState() {
+    pthread_mutex_unlock(&self.lock)
   }
 }
 
