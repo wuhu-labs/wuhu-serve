@@ -181,17 +181,21 @@ struct HTTP1Connection {
       return
     }
 
-    if explicitContentLength != nil {
-      for try await chunk in response.body.asyncBytes() where !chunk.isEmpty {
-        try await self.connection.write(contentsOf: chunk)
+    do {
+      if explicitContentLength != nil {
+        for try await chunk in response.body.asyncBytes() where !chunk.isEmpty {
+          try await self.connection.write(contentsOf: chunk)
+        }
+        return
       }
-      return
-    }
 
-    for try await chunk in response.body.asyncBytes() where !chunk.isEmpty {
-      try await self.connection.write(contentsOf: serializeChunk(chunk))
+      for try await chunk in response.body.asyncBytes() where !chunk.isEmpty {
+        try await self.connection.write(contentsOf: serializeChunk(chunk))
+      }
+      try await self.connection.write(contentsOf: Array("0\r\n\r\n".utf8))
+    } catch {
+      throw ResponseBodyWriteError(underlying: error)
     }
-    try await self.connection.write(contentsOf: Array("0\r\n\r\n".utf8))
   }
 
   func writeErrorResponse(status: Status) async throws {
@@ -267,6 +271,10 @@ private func serializeHeaders(
 
 private func serializeChunk(_ bytes: Bytes) -> Bytes {
   Array(String(bytes.count, radix: 16).utf8) + [13, 10] + bytes + [13, 10]
+}
+
+struct ResponseBodyWriteError: Error {
+  let underlying: any Error
 }
 
 private func responseAllowsBody(_ status: Status) -> Bool {

@@ -74,6 +74,9 @@ public enum Serve {
       let response = try await handler(request)
       try await ensureResolved(request.body)
       try await http.writeResponse(response)
+    } catch let error as ResponseBodyWriteError {
+      await connection.close()
+      throw error.underlying
     } catch let error as ServeError {
       try? await http.writeErrorResponse(status: error.responseStatus)
       await connection.close()
