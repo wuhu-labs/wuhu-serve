@@ -190,6 +190,41 @@ struct ServeNIOTests {
     #expect(snapshot.connectionErrors.isEmpty)
   }
 
+  @Test func streamedResponseFailureAfterHeadersClosesConnectionWithoutSecondResponse() async throws {
+    enum StreamFailure: Error {
+      case boom
+    }
+
+    let recorder = HookRecorder()
+
+    try await withTCPServer(hooks: recorder.hooks) { _ in
+      Response(
+        status: .ok,
+        body: .stream(
+          contentType: "text/plain; charset=utf-8",
+          AsyncThrowingStream { continuation in
+            continuation.yield(Array("hello".utf8))
+            continuation.finish(throwing: StreamFailure.boom)
+          }
+        )
+      )
+    } operation: { server in
+      let port = try #require(server.boundAddress.port)
+      let response = try await sendRawTCPRequest(port: port, request: rawRequest(path: "/stream"))
+      #expect(response.contains("HTTP/1.1 200 OK\r\n"))
+      #expect(response.contains("transfer-encoding: chunked\r\n"))
+      #expect(response.contains("5\r\nhello\r\n"))
+      #expect(!response.contains("HTTP/1.1 500 Internal Server Error\r\n"))
+      #expect(!response.contains("500 Internal Server Error\n"))
+      #expect(!response.hasSuffix("0\r\n\r\n"))
+    }
+
+    let snapshot = recorder.snapshot()
+    #expect(snapshot.connectionErrors.count == 1)
+    #expect(snapshot.connectionErrors[0].contains("boom"))
+    #expect(snapshot.handlerErrors.isEmpty)
+  }
+
   @Test func malformedRequestsDoNotCrashTheServer() async throws {
     let recorder = HookRecorder()
 

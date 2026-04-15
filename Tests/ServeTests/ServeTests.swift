@@ -237,6 +237,48 @@ import Testing
     #expect(response.contains("HTTP/1.1 400 Bad Request\r\n"))
   }
 
+  @Test func streamedResponseFailureAfterHeadersDoesNotWriteSecondResponse() async throws {
+    enum StreamFailure: Error {
+      case boom
+    }
+
+    let connection = InMemoryConnection(
+      inboundSegments: [
+        Array("GET /stream HTTP/1.1\r\n".utf8),
+        Array("Host: app.wuhu.test\r\n".utf8),
+        Array("\r\n".utf8),
+      ]
+    )
+
+    do {
+      try await Serve.serve(connection: connection) { _ in
+        Response(
+          status: .ok,
+          body: .stream(
+            contentType: "text/plain; charset=utf-8",
+            AsyncThrowingStream { continuation in
+              continuation.yield(Array("hello".utf8))
+              continuation.finish(throwing: StreamFailure.boom)
+            }
+          )
+        )
+      }
+      Issue.record("Expected streamed response failure")
+    } catch let error as StreamFailure {
+      #expect(error == .boom)
+    } catch {
+      Issue.record("Unexpected error: \(error)")
+    }
+
+    let response = connection.outputString()
+    #expect(response.contains("HTTP/1.1 200 OK\r\n"))
+    #expect(response.contains("transfer-encoding: chunked\r\n"))
+    #expect(response.contains("5\r\nhello\r\n"))
+    #expect(!response.contains("HTTP/1.1 500 Internal Server Error\r\n"))
+    #expect(!response.contains("500 Internal Server Error\n"))
+    #expect(!response.hasSuffix("0\r\n\r\n"))
+  }
+
   @Test func rejectsTooManyHeaders() async throws {
     let options = ServeOptions(maximumHeaderCount: 1)
     let connection = InMemoryConnection(
