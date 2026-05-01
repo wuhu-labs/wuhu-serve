@@ -210,6 +210,38 @@ struct HTTP1Connection {
     try await self.connection.write(contentsOf: body)
   }
 
+  func performWebSocketUpgrade(request: Request) async throws {
+    let upgrade = firstHeaderValue(named: "upgrade", in: request.headers)
+    let connectionHeader = firstHeaderValue(named: "connection", in: request.headers)
+    let key = firstHeaderValue(named: "sec-websocket-key", in: request.headers)
+    let version = firstHeaderValue(named: "sec-websocket-version", in: request.headers)
+
+    guard upgrade?.lowercased() == "websocket" else {
+      throw ServeError.invalidUpgrade
+    }
+
+    guard connectionHeader?.lowercased().contains("upgrade") ?? false else {
+      throw ServeError.invalidUpgrade
+    }
+
+    guard version == "13" else {
+      throw ServeError.invalidUpgrade
+    }
+
+    guard let key, !key.isEmpty else {
+      throw ServeError.invalidWebSocketKey
+    }
+
+    let acceptKey = computeWebSocketAccept(key: key)
+    var wire = "HTTP/1.1 101 Switching Protocols\r\n"
+    wire += "Upgrade: websocket\r\n"
+    wire += "Connection: Upgrade\r\n"
+    wire += "Sec-WebSocket-Accept: \(acceptKey)\r\n"
+    wire += "\r\n"
+
+    try await self.connection.write(contentsOf: Array(wire.utf8))
+  }
+
   private func requestURL(
     for target: String,
     method: Fetch.Method,
@@ -292,4 +324,22 @@ private extension String {
   func trimmingHTTPWhitespace() -> String {
     self.trimmingCharacters(in: .whitespacesAndNewlines)
   }
+}
+
+#if canImport(CryptoKit)
+import CryptoKit
+#endif
+
+private func computeWebSocketAccept(key: String) -> String {
+  let magic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+  let combined = key + magic
+  #if canImport(CryptoKit)
+  let hash = Insecure.SHA1.hash(data: Data(combined.utf8))
+  return Data(hash).base64EncodedString()
+  #else
+  // The current platform set (Apple) always has CryptoKit.
+  // If non-Apple platforms are ever added, use a SHA-1 implementation
+  // from a suitable dependency.
+  fatalError("WebSocket upgrade requires CryptoKit (Apple platforms)")
+  #endif
 }
