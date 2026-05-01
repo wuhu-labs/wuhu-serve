@@ -1,3 +1,4 @@
+import Fetch
 import NIOCore
 import NIOPosix
 import Serve
@@ -64,6 +65,99 @@ public final class ServeNIOServer: @unchecked Sendable {
     self.boundAddress = boundAddress
     self.hooks = hooks
     self.state = state
+  }
+
+  /// Like `bind(host:port:options:hooks:eventLoopGroup:handler:)` but the handler
+  /// may request a WebSocket upgrade. When the handler returns `.websocket`,
+  /// the connection is handed off to `onUpgrade` instead of being closed.
+  ///
+  /// - Parameters:
+  ///   - host: The host to bind.
+  ///   - port: The port to bind.
+  ///   - options: HTTP parsing / serialization limits.
+  ///   - hooks: Lifecycle and error observation callbacks.
+  ///   - eventLoopGroup: The NIO event loop group.
+  ///   - handler: Called with the parsed request; returns either a normal HTTP
+  ///     response or a WebSocket upgrade intent.
+  ///   - onUpgrade: Called with the raw connection after the 101 handshake.
+  ///     The caller owns the connection from that point on.
+  public static func bindUpgradable(
+    host: String = "127.0.0.1",
+    port: Int,
+    options: ServeOptions = .init(),
+    hooks: ServeNIOHooks = .init(),
+    eventLoopGroup: EventLoopGroup = MultiThreadedEventLoopGroup.singleton,
+    handler: @escaping @Sendable (Request) async throws -> UpgradeResult,
+    onUpgrade: @escaping @Sendable (any ServeConnection) async -> Void
+  ) async throws -> Self {
+    let state = ServeNIOServerState()
+    let bootstrap = self.makeUpgradableBootstrap(
+      eventLoopGroup: eventLoopGroup,
+      options: options,
+      hooks: hooks,
+      state: state,
+      handler: handler,
+      onUpgrade: onUpgrade,
+    )
+
+    do {
+      let serverChannel = try await bootstrap.bind(host: host, port: port).get()
+      guard let boundAddress = serverChannel.localAddress else {
+        try? await serverChannel.close()
+        throw BindError.missingBoundAddress
+      }
+      let server = Self(
+        serverChannel: serverChannel,
+        boundAddress: boundAddress,
+        hooks: hooks,
+        state: state,
+      )
+      hooks.onDidBind(boundAddress)
+      return server
+    } catch {
+      hooks.onStartupFailure(error)
+      throw error
+    }
+  }
+
+  /// Like `bindUpgradable(host:port:options:hooks:eventLoopGroup:handler:onUpgrade:)`
+  /// but binds to a Unix domain socket.
+  public static func bindUpgradable(
+    unixDomainSocketPath: String,
+    options: ServeOptions = .init(),
+    hooks: ServeNIOHooks = .init(),
+    eventLoopGroup: EventLoopGroup = MultiThreadedEventLoopGroup.singleton,
+    handler: @escaping @Sendable (Request) async throws -> UpgradeResult,
+    onUpgrade: @escaping @Sendable (any ServeConnection) async -> Void
+  ) async throws -> Self {
+    let state = ServeNIOServerState()
+    let bootstrap = self.makeUpgradableBootstrap(
+      eventLoopGroup: eventLoopGroup,
+      options: options,
+      hooks: hooks,
+      state: state,
+      handler: handler,
+      onUpgrade: onUpgrade,
+    )
+
+    do {
+      let serverChannel = try await bootstrap.bind(unixDomainSocketPath: unixDomainSocketPath).get()
+      guard let boundAddress = serverChannel.localAddress else {
+        try? await serverChannel.close()
+        throw BindError.missingBoundAddress
+      }
+      let server = Self(
+        serverChannel: serverChannel,
+        boundAddress: boundAddress,
+        hooks: hooks,
+        state: state,
+      )
+      hooks.onDidBind(boundAddress)
+      return server
+    } catch {
+      hooks.onStartupFailure(error)
+      throw error
+    }
   }
 
   public static func bind(
@@ -196,6 +290,63 @@ public final class ServeNIOServer: @unchecked Sendable {
     state: ServeNIOServerState,
     handler: @escaping Handler
   ) -> ServerBootstrap {
+    Self._makeBootstrap(
+      eventLoopGroup: eventLoopGroup,
+      options: options,
+      hooks: hooks,
+      state: state,
+      connectionHandler: { connection, context in
+        try await Serve.serve(connection: connection, options: options) { request in
+          do {
+            return try await handler(request)
+          } catch {
+            hooks.onHandlerError(context, error)
+            throw ReportedHandlerError(underlying: error)
+          }
+        }
+      },
+    )
+  }
+
+  private static func makeUpgradableBootstrap(
+    eventLoopGroup: EventLoopGroup,
+    options: ServeOptions,
+    hooks: ServeNIOHooks,
+    state: ServeNIOServerState,
+    handler: @escaping @Sendable (Request) async throws -> UpgradeResult,
+    onUpgrade: @escaping @Sendable (any ServeConnection) async -> Void
+  ) -> ServerBootstrap {
+    Self._makeBootstrap(
+      eventLoopGroup: eventLoopGroup,
+      options: options,
+      hooks: hooks,
+      state: state,
+      connectionHandler: { connection, context in
+        if let upgradedConnection = try await Serve.serveUpgradable(
+          connection: connection,
+          options: options,
+          handler: { request in
+            do {
+              return try await handler(request)
+            } catch {
+              hooks.onHandlerError(context, error)
+              throw ReportedHandlerError(underlying: error)
+            }
+          }
+        ) {
+          await onUpgrade(upgradedConnection)
+        }
+      },
+    )
+  }
+
+  private static func _makeBootstrap(
+    eventLoopGroup: EventLoopGroup,
+    options _: ServeOptions,
+    hooks: ServeNIOHooks,
+    state: ServeNIOServerState,
+    connectionHandler: @escaping @Sendable (any ServeConnection, ServeNIOConnectionContext) async throws -> Void
+  ) -> ServerBootstrap {
     ServerBootstrap(group: eventLoopGroup)
       .serverChannelOption(.socketOption(.so_reuseaddr), value: 1)
       .childChannelInitializer { channel in
@@ -217,14 +368,7 @@ public final class ServeNIOServer: @unchecked Sendable {
           }
 
           do {
-            try await Serve.serve(connection: connection, options: options) { request in
-              do {
-                return try await handler(request)
-              } catch {
-                hooks.onHandlerError(context, error)
-                throw ReportedHandlerError(underlying: error)
-              }
-            }
+            try await connectionHandler(connection, context)
           } catch is ReportedHandlerError {
           } catch is ServeError {
           } catch {
