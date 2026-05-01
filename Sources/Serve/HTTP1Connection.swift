@@ -210,6 +210,38 @@ struct HTTP1Connection {
     try await self.connection.write(contentsOf: body)
   }
 
+  func performWebSocketUpgrade(request: Request) async throws {
+    let upgrade = firstHeaderValue(named: "upgrade", in: request.headers)
+    let connectionHeader = firstHeaderValue(named: "connection", in: request.headers)
+    let key = firstHeaderValue(named: "sec-websocket-key", in: request.headers)
+    let version = firstHeaderValue(named: "sec-websocket-version", in: request.headers)
+
+    guard upgrade?.lowercased() == "websocket" else {
+      throw ServeError.invalidUpgrade
+    }
+
+    guard connectionHeader?.lowercased().contains("upgrade") ?? false else {
+      throw ServeError.invalidUpgrade
+    }
+
+    guard version == "13" else {
+      throw ServeError.invalidUpgrade
+    }
+
+    guard let key, !key.isEmpty else {
+      throw ServeError.invalidWebSocketKey
+    }
+
+    let acceptKey = computeWebSocketAccept(key: key)
+    var wire = "HTTP/1.1 101 Switching Protocols\r\n"
+    wire += "Upgrade: websocket\r\n"
+    wire += "Connection: Upgrade\r\n"
+    wire += "Sec-WebSocket-Accept: \(acceptKey)\r\n"
+    wire += "\r\n"
+
+    try await self.connection.write(contentsOf: Array(wire.utf8))
+  }
+
   private func requestURL(
     for target: String,
     method: Fetch.Method,
@@ -293,3 +325,103 @@ private extension String {
     self.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 }
+
+#if canImport(CryptoKit)
+import CryptoKit
+#endif
+
+private func computeWebSocketAccept(key: String) -> String {
+  let magic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+  let combined = key + magic
+  #if canImport(CryptoKit)
+  let hash = Insecure.SHA1.hash(data: Data(combined.utf8))
+  return Data(hash).base64EncodedString()
+  #else
+  let bytes = Array(combined.utf8)
+  let digest = sha1(bytes)
+  return Data(digest).base64EncodedString()
+  #endif
+}
+
+#if !canImport(CryptoKit)
+private func sha1(_ message: [UInt8]) -> [UInt8] {
+  var ml = message.count
+  var h0: UInt32 = 0x67452301
+  var h1: UInt32 = 0xEFCDAB89
+  var h2: UInt32 = 0x98BADCFE
+  var h3: UInt32 = 0x10325476
+  var h4: UInt32 = 0xC3D2E1F0
+
+  var padded = message
+  padded.append(0x80)
+
+  let targetLength = ((ml + 9 + 63) / 64) * 64
+  while padded.count < targetLength - 8 {
+    padded.append(0)
+  }
+
+  ml *= 8
+  for i in stride(from: 56, through: 0, by: -8) {
+    padded.append(UInt8((ml >> i) & 0xFF))
+  }
+
+  for chunkStart in stride(from: 0, to: padded.count, by: 64) {
+    var w = [UInt32](repeating: 0, count: 80)
+    for i in 0..<16 {
+      let base = chunkStart + i * 4
+      w[i] = (UInt32(padded[base]) << 24)
+           | (UInt32(padded[base + 1]) << 16)
+           | (UInt32(padded[base + 2]) << 8)
+           | UInt32(padded[base + 3])
+    }
+    for i in 16..<80 {
+      w[i] = leftRotate(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], by: 1)
+    }
+
+    var a = h0, b = h1, c = h2, d = h3, e = h4
+
+    for i in 0..<80 {
+      let f: UInt32, k: UInt32
+      if i < 20 {
+        f = (b & c) | ((~b) & d)
+        k = 0x5A827999
+      } else if i < 40 {
+        f = b ^ c ^ d
+        k = 0x6ED9EBA1
+      } else if i < 60 {
+        f = (b & c) | (b & d) | (c & d)
+        k = 0x8F1BBCDC
+      } else {
+        f = b ^ c ^ d
+        k = 0xCA62C1D6
+      }
+
+      let temp = leftRotate(a, by: 5) &+ f &+ e &+ k &+ w[i]
+      e = d
+      d = c
+      c = leftRotate(b, by: 30)
+      b = a
+      a = temp
+    }
+
+    h0 = h0 &+ a
+    h1 = h1 &+ b
+    h2 = h2 &+ c
+    h3 = h3 &+ d
+    h4 = h4 &+ e
+  }
+
+  var digest = [UInt8]()
+  for h in [h0, h1, h2, h3, h4] {
+    digest.append(UInt8((h >> 24) & 0xFF))
+    digest.append(UInt8((h >> 16) & 0xFF))
+    digest.append(UInt8((h >> 8) & 0xFF))
+    digest.append(UInt8(h & 0xFF))
+  }
+  return digest
+}
+
+private func leftRotate(_ value: UInt32, by count: UInt32) -> UInt32 {
+  (value << count) | (value >> (32 - count))
+}
+#endif

@@ -432,6 +432,256 @@ import Testing
     let response = connection.outputString()
     #expect(response.contains("HTTP/1.1 400 Bad Request\r\n"))
   }
+
+  // MARK: - WebSocket upgrade
+
+  @Test func successfulWebSocketUpgrade() async throws {
+    // RFC 6455 §4.2.2 example key and expected accept value
+    let key = "dGhlIHNhbXBsZSBub25jZQ=="
+    let expectedAccept = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+
+    let connection = InMemoryConnection(
+      inboundSegments: [
+        Array("GET /ws HTTP/1.1\r\n".utf8),
+        Array("Host: app.wuhu.test\r\n".utf8),
+        Array("Upgrade: websocket\r\n".utf8),
+        Array("Connection: Upgrade\r\n".utf8),
+        Array("Sec-WebSocket-Key: \(key)\r\n".utf8),
+        Array("Sec-WebSocket-Version: 13\r\n".utf8),
+        Array("\r\n".utf8),
+      ]
+    )
+
+    let returnedConnection = try await Serve.serveUpgradable(connection: connection) { request in
+      #expect(request.method == .get)
+      #expect(request.url.path == "/ws")
+      return .websocket
+    }
+
+    #expect(returnedConnection != nil)
+
+    let response = connection.outputString()
+    #expect(response.contains("HTTP/1.1 101 Switching Protocols\r\n"))
+    #expect(response.contains("Upgrade: websocket\r\n"))
+    #expect(response.contains("Connection: Upgrade\r\n"))
+    #expect(response.contains("Sec-WebSocket-Accept: \(expectedAccept)\r\n"))
+    #expect(!connection.isClosed)
+  }
+
+  @Test func normalResponseViaServeUpgradable() async throws {
+    let connection = InMemoryConnection(
+      inboundSegments: [
+        Array("GET / HTTP/1.1\r\n".utf8),
+        Array("Host: app.wuhu.test\r\n".utf8),
+        Array("\r\n".utf8),
+      ]
+    )
+
+    let returnedConnection = try await Serve.serveUpgradable(connection: connection) { _ in
+      return .response(Response(status: .ok, body: .chunk(Array("hello".utf8))))
+    }
+
+    #expect(returnedConnection == nil)
+
+    let response = connection.outputString()
+    #expect(response.contains("HTTP/1.1 200 OK\r\n"))
+    #expect(response.contains("hello"))
+    #expect(connection.isClosed)
+  }
+
+  @Test func upgradeRejectedWhenMissingUpgradeHeader() async throws {
+    let connection = InMemoryConnection(
+      inboundSegments: [
+        Array("GET /ws HTTP/1.1\r\n".utf8),
+        Array("Host: app.wuhu.test\r\n".utf8),
+        Array("Connection: Upgrade\r\n".utf8),
+        Array("Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n".utf8),
+        Array("Sec-WebSocket-Version: 13\r\n".utf8),
+        Array("\r\n".utf8),
+      ]
+    )
+
+    do {
+      _ = try await Serve.serveUpgradable(connection: connection) { _ in
+        return .websocket
+      }
+      Issue.record("Expected invalid upgrade error")
+    } catch let error as ServeError {
+      #expect(error == .invalidUpgrade)
+    } catch {
+      Issue.record("Unexpected error: \(error)")
+    }
+
+    let response = connection.outputString()
+    #expect(response.contains("HTTP/1.1 400 Bad Request\r\n"))
+    #expect(connection.isClosed)
+  }
+
+  @Test func upgradeRejectedWhenWrongUpgradeValue() async throws {
+    let connection = InMemoryConnection(
+      inboundSegments: [
+        Array("GET /ws HTTP/1.1\r\n".utf8),
+        Array("Host: app.wuhu.test\r\n".utf8),
+        Array("Upgrade: h2c\r\n".utf8),
+        Array("Connection: Upgrade\r\n".utf8),
+        Array("Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n".utf8),
+        Array("Sec-WebSocket-Version: 13\r\n".utf8),
+        Array("\r\n".utf8),
+      ]
+    )
+
+    do {
+      _ = try await Serve.serveUpgradable(connection: connection) { _ in
+        return .websocket
+      }
+      Issue.record("Expected invalid upgrade error")
+    } catch let error as ServeError {
+      #expect(error == .invalidUpgrade)
+    } catch {
+      Issue.record("Unexpected error: \(error)")
+    }
+
+    let response = connection.outputString()
+    #expect(response.contains("HTTP/1.1 400 Bad Request\r\n"))
+  }
+
+  @Test func upgradeRejectedWhenMissingWebSocketKey() async throws {
+    let connection = InMemoryConnection(
+      inboundSegments: [
+        Array("GET /ws HTTP/1.1\r\n".utf8),
+        Array("Host: app.wuhu.test\r\n".utf8),
+        Array("Upgrade: websocket\r\n".utf8),
+        Array("Connection: Upgrade\r\n".utf8),
+        Array("Sec-WebSocket-Version: 13\r\n".utf8),
+        Array("\r\n".utf8),
+      ]
+    )
+
+    do {
+      _ = try await Serve.serveUpgradable(connection: connection) { _ in
+        return .websocket
+      }
+      Issue.record("Expected invalid WebSocket key error")
+    } catch let error as ServeError {
+      #expect(error == .invalidWebSocketKey)
+    } catch {
+      Issue.record("Unexpected error: \(error)")
+    }
+
+    let response = connection.outputString()
+    #expect(response.contains("HTTP/1.1 400 Bad Request\r\n"))
+  }
+
+  @Test func upgradeRejectedWhenEmptyWebSocketKey() async throws {
+    let connection = InMemoryConnection(
+      inboundSegments: [
+        Array("GET /ws HTTP/1.1\r\n".utf8),
+        Array("Host: app.wuhu.test\r\n".utf8),
+        Array("Upgrade: websocket\r\n".utf8),
+        Array("Connection: Upgrade\r\n".utf8),
+        Array("Sec-WebSocket-Key: \r\n".utf8),
+        Array("Sec-WebSocket-Version: 13\r\n".utf8),
+        Array("\r\n".utf8),
+      ]
+    )
+
+    do {
+      _ = try await Serve.serveUpgradable(connection: connection) { _ in
+        return .websocket
+      }
+      Issue.record("Expected invalid WebSocket key error")
+    } catch let error as ServeError {
+      #expect(error == .invalidWebSocketKey)
+    } catch {
+      Issue.record("Unexpected error: \(error)")
+    }
+
+    let response = connection.outputString()
+    #expect(response.contains("HTTP/1.1 400 Bad Request\r\n"))
+  }
+
+  @Test func upgradeRejectedWhenMissingConnectionUpgrade() async throws {
+    let connection = InMemoryConnection(
+      inboundSegments: [
+        Array("GET /ws HTTP/1.1\r\n".utf8),
+        Array("Host: app.wuhu.test\r\n".utf8),
+        Array("Upgrade: websocket\r\n".utf8),
+        Array("Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n".utf8),
+        Array("Sec-WebSocket-Version: 13\r\n".utf8),
+        Array("\r\n".utf8),
+      ]
+    )
+
+    do {
+      _ = try await Serve.serveUpgradable(connection: connection) { _ in
+        return .websocket
+      }
+      Issue.record("Expected invalid upgrade error")
+    } catch let error as ServeError {
+      #expect(error == .invalidUpgrade)
+    } catch {
+      Issue.record("Unexpected error: \(error)")
+    }
+
+    let response = connection.outputString()
+    #expect(response.contains("HTTP/1.1 400 Bad Request\r\n"))
+  }
+
+  @Test func upgradeRejectedWhenWrongWebSocketVersion() async throws {
+    let connection = InMemoryConnection(
+      inboundSegments: [
+        Array("GET /ws HTTP/1.1\r\n".utf8),
+        Array("Host: app.wuhu.test\r\n".utf8),
+        Array("Upgrade: websocket\r\n".utf8),
+        Array("Connection: Upgrade\r\n".utf8),
+        Array("Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n".utf8),
+        Array("Sec-WebSocket-Version: 8\r\n".utf8),
+        Array("\r\n".utf8),
+      ]
+    )
+
+    do {
+      _ = try await Serve.serveUpgradable(connection: connection) { _ in
+        return .websocket
+      }
+      Issue.record("Expected invalid upgrade error")
+    } catch let error as ServeError {
+      #expect(error == .invalidUpgrade)
+    } catch {
+      Issue.record("Unexpected error: \(error)")
+    }
+
+    let response = connection.outputString()
+    #expect(response.contains("HTTP/1.1 400 Bad Request\r\n"))
+  }
+
+  @Test func caseInsensitiveUpgradeHeaders() async throws {
+    let key = "dGhlIHNhbXBsZSBub25jZQ=="
+    let expectedAccept = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+
+    let connection = InMemoryConnection(
+      inboundSegments: [
+        Array("GET /ws HTTP/1.1\r\n".utf8),
+        Array("Host: app.wuhu.test\r\n".utf8),
+        Array("Upgrade: WebSocket\r\n".utf8),
+        Array("Connection: upgrade\r\n".utf8),
+        Array("Sec-WebSocket-Key: \(key)\r\n".utf8),
+        Array("Sec-WebSocket-Version: 13\r\n".utf8),
+        Array("\r\n".utf8),
+      ]
+    )
+
+    let returnedConnection = try await Serve.serveUpgradable(connection: connection) { _ in
+      return .websocket
+    }
+
+    #expect(returnedConnection != nil)
+
+    let response = connection.outputString()
+    #expect(response.contains("HTTP/1.1 101 Switching Protocols\r\n"))
+    #expect(response.contains("Sec-WebSocket-Accept: \(expectedAccept)\r\n"))
+    #expect(!connection.isClosed)
+  }
 }
 
 private func bodyText(_ body: Body?) async throws -> String? {
